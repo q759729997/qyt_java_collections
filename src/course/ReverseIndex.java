@@ -41,7 +41,7 @@ public class ReverseIndex {
 				String word = stringTokenizer.nextToken();
 				// only write not none word
 				word = word.trim();
-				if(word.length() > 1) {
+				if (word.length() > 1) {
 					text.set(word + "@@@" + fileName);
 					context.write(text, ONE);
 				}
@@ -64,24 +64,23 @@ public class ReverseIndex {
 		}
 	}
 
-	@SuppressWarnings("unchecked")
 	public static Map<String, List<String>> collect(String path, Configuration conf) throws IOException {
 		FileSystem fs = FileSystem.get(conf);
 		FileStatus[] files = fs.listStatus(new Path(path));
 		BufferedReader br = null;
-		Map<String, List<String>> rlt = new HashMap<String, List<String>>();
-		Map<String, Map<String, Integer>> data = new HashMap<String, Map<String,Integer>>();
+		Map<String, List<String>> collectionMap = new HashMap<String, List<String>>();
+		Map<String, Map<String, Integer>> data = new HashMap<String, Map<String, Integer>>();
 		for (FileStatus file : files) {
 			try {
 				br = new BufferedReader(new InputStreamReader(fs.open(file.getPath()), "utf-8"));
 				String line = br.readLine();
 				while (line != null) {
-					StringTokenizer st = new StringTokenizer(line);
-					String key = st.nextToken();
-					String value = st.nextToken();
-					String[] tmp = key.split("@@@");
-					String word = tmp[0];
-					String filename = tmp[1];
+					StringTokenizer stringTokenizer = new StringTokenizer(line);
+					String key = stringTokenizer.nextToken();
+					String value = stringTokenizer.nextToken();
+					String[] keyItems = key.split("@@@");
+					String word = keyItems[0];
+					String filename = keyItems[1];
 					int cnt = Integer.parseInt(value);
 					if (data.containsKey(word)) {
 						Map<String, Integer> t = data.get(word);
@@ -103,8 +102,7 @@ public class ReverseIndex {
 				}
 			}
 		}
-		// 解析结果文件结束
-		// 计算每个文件的单词总数
+		// calculate total words for each file
 		Map<String, Integer> fileWordsTotal = new HashMap<String, Integer>();
 		for (Map.Entry<String, Map<String, Integer>> entry : data.entrySet()) {
 			for (Map.Entry<String, Integer> innerEntry : entry.getValue().entrySet()) {
@@ -116,22 +114,18 @@ public class ReverseIndex {
 				fileWordsTotal.put(filename, cnt);
 			}
 		}
-		// 计算每个文件的单词总数结束
-		// 计算每个单词出现过的文件
+		// count appear file for each word
 		Map<String, List<String>> wordsFileList = new HashMap<String, List<String>>();
 		for (Map.Entry<String, Map<String, Integer>> entry : data.entrySet()) {
 			String word = entry.getKey();
-			// 计算该词出现过的文件名列表
 			List<String> fileList = new ArrayList<String>();
 			for (Map.Entry<String, Integer> innerEntry : entry.getValue().entrySet()) {
 				String filename = innerEntry.getKey();
 				fileList.add(filename);
 			}
-			// 计算该词出现过的文件名列表结束
 			wordsFileList.put(word, fileList);
 		}
-		// 计算每个单词出现过的文件结束
-		// 整理结果
+		// result combine
 		for (Map.Entry<String, List<String>> entry : wordsFileList.entrySet()) {
 			String word = entry.getKey();
 			List<String> wordValue = new ArrayList<String>();
@@ -141,9 +135,9 @@ public class ReverseIndex {
 				String value = "(" + filename + "," + termFreq + "," + fileWords + ")";
 				wordValue.add(value);
 			}
-			rlt.put(word, wordValue);
+			collectionMap.put(word, wordValue);
 		}
-		return rlt;
+		return collectionMap;
 	}
 
 	public static void main(String[] args) throws Exception {
@@ -166,14 +160,15 @@ public class ReverseIndex {
 		System.out.println("OutputPath : " + args[args.length - 1]);
 		FileOutputFormat.setOutputPath(job, new Path(args[args.length - 1]));
 		boolean result = job.waitForCompletion(true);
-		Map<String, List<String>> rlt = collect(args[args.length - 1], conf);
-		for (Map.Entry<String, List<String>> entry : rlt.entrySet()) {
+		Map<String, List<String>> collectionMap = collect(args[args.length - 1], conf);
+		for (Map.Entry<String, List<String>> entry : collectionMap.entrySet()) {
 			String word = "";
 			int wordCount = entry.getValue().size();
 			for (String s : entry.getValue()) {
 				word += s + ",";
 			}
-			System.out.println(entry.getKey() + "->" + wordCount+ "{" + word.substring(0, word.length() - 1) + "}");
+			word = word.substring(0, word.length() - 1);
+			System.out.println(entry.getKey() + " -> " + wordCount + " : {" + word + "}");
 		}
 		System.exit(result ? 0 : 1);
 	}
