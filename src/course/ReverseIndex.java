@@ -1,19 +1,13 @@
 package course;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.StringTokenizer;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
@@ -24,121 +18,96 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 public class ReverseIndex {
 
-	public static class TokenizerMapper extends Mapper<Object, Text, Text, IntWritable> {
+	public static class TokenizerMapper extends Mapper<Object, Text, Text, Text> {
 
-		private final static IntWritable ONE = new IntWritable(1);
-		private Text text = new Text();
+		private Text keyInfo = new Text();
+		private Text valueInfo = new Text("1");
 
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+			// input fileContext and fileName
+			// output <word@@@fileName@@@fileWordsSize, 1>
+			// get fileName
 			FileSplit fileSplit = (FileSplit) context.getInputSplit();
 			String fileName = fileSplit.getPath().getName();
-			// preprocess file content
-			String fileContent = value.toString();
-			fileContent.replaceAll("\n", " ");
-			fileContent.replaceAll("\r", " ");
+			// word segment
 			StringTokenizer stringTokenizer = new StringTokenizer(value.toString());
+			// word count
+			List<String> words = new ArrayList<String>();
 			while (stringTokenizer.hasMoreTokens()) {
 				String word = stringTokenizer.nextToken();
 				// only write not none word
 				word = word.trim();
 				if (word.length() > 1) {
-					text.set(word + "@@@" + fileName);
-					context.write(text, ONE);
+					words.add(word);
 				}
+			}
+			int fileWordsSize = words.size();
+			System.out.println("fileName:" + fileName);
+			System.out.println("fileWordsSize:" + fileWordsSize);
+			for(String word : words) {
+				keyInfo.set(word + "@@@" + fileName + "@@@" + fileWordsSize);
+				context.write(keyInfo, valueInfo);
 			}
 		}
 	}
+	
+	public static class ReverseIndexCombiner extends Reducer<Text, Text, Text, Text>{
+		
+		private Text keyInfo = new Text();
+		private Text valueInfo = new Text();
 
-	public static class IndexReducer extends Reducer<Text, IntWritable, Text, IntWritable> {
-
-		private IntWritable result = new IntWritable();
-
-		public void reduce(Text key, Iterable<IntWritable> values, Context context)
+		public void reduce(Text key, Iterable<Text> values, Context context)
 				throws IOException, InterruptedException {
-			int sum = 0;
-			for (IntWritable val : values) {
-				sum += val.get();
+			// input <word@@@fileName@@@fileWordsSize, [1, 1, 1, ¡­¡­]>
+			// output <word, freq@@@fileName@@@fileWordsSize>
+			int freq = 0;
+			for (Text val : values) {
+				freq += 1;
 			}
-			result.set(sum);
-			context.write(key, result);
+			String[] keyTokens = key.toString().split("@@@");
+			keyInfo.set(keyTokens[0]);
+			String fileName = keyTokens[1];
+			String fileWordsSize = keyTokens[2];
+			valueInfo.set(freq + "@@@" + fileName + "@@@" + fileWordsSize);
+			context.write(keyInfo, valueInfo);
 		}
 	}
 
-	public static Map<String, List<String>> collect(String path, Configuration conf) throws IOException {
-		FileSystem fs = FileSystem.get(conf);
-		FileStatus[] files = fs.listStatus(new Path(path));
-		BufferedReader br = null;
-		Map<String, List<String>> collectionMap = new HashMap<String, List<String>>();
-		Map<String, Map<String, Integer>> data = new HashMap<String, Map<String, Integer>>();
-		for (FileStatus file : files) {
-			try {
-				br = new BufferedReader(new InputStreamReader(fs.open(file.getPath()), "utf-8"));
-				String line = br.readLine();
-				while (line != null) {
-					StringTokenizer stringTokenizer = new StringTokenizer(line);
-					String key = stringTokenizer.nextToken();
-					String value = stringTokenizer.nextToken();
-					String[] keyItems = key.split("@@@");
-					String word = keyItems[0];
-					String filename = keyItems[1];
-					int cnt = Integer.parseInt(value);
-					if (data.containsKey(word)) {
-						Map<String, Integer> t = data.get(word);
-						if (t.containsKey(filename)) {
-							cnt = t.get(filename) + cnt;
-						}
-						t.put(filename, cnt);
-						data.put(word, t);
-					} else {
-						Map<String, Integer> t = new HashMap<String, Integer>();
-						t.put(filename, cnt);
-						data.put(word, t);
-					}
-					line = br.readLine();
-				}
-			} finally {
-				if (br != null) {
-					br.close();
-				}
+	public static class ReverseIndexReducer extends Reducer<Text, Text, Text, Text> {
+
+		private Text keyInfo = new Text();
+		private Text valueInfo = new Text("");
+
+		public void reduce(Text key, Iterable<Text> values, Context context)
+				throws IOException, InterruptedException {
+			// input <word, [freq@@@fileName@@@fileWordsSize, freq@@@fileName@@@fileWordsSize, ¡­¡­]>
+			// output <cat¡ª> 3£º{(d1.txt, 2, 4),(d2.txt,3,5),(d4.txt,1,5)}, "">
+			StringBuilder sb = new StringBuilder();
+			sb.append(key);
+			sb.append(" -> ");
+			int freq = 0;
+			StringBuilder subSb = new StringBuilder();
+			for (Text val : values) {
+				freq += 1;
+				String[] keyTokens = val.toString().split("@@@");
+				subSb.append("(");
+				subSb.append(keyTokens[1]); //add fileName
+				subSb.append(", ");
+				subSb.append(keyTokens[0]); //add freq
+				subSb.append(", ");
+				subSb.append(keyTokens[2]); //add fileWordsSize
+				subSb.append("),");
 			}
+			sb.append(freq);
+			sb.append(" : {");
+			sb.append(subSb.toString());
+			sb.append("}");
+			keyInfo.set(sb.toString());
+			System.out.println(keyInfo.toString());
+			context.write(keyInfo, valueInfo);
 		}
-		// calculate total words for each file
-		Map<String, Integer> fileWordsTotal = new HashMap<String, Integer>();
-		for (Map.Entry<String, Map<String, Integer>> entry : data.entrySet()) {
-			for (Map.Entry<String, Integer> innerEntry : entry.getValue().entrySet()) {
-				String filename = innerEntry.getKey();
-				int cnt = innerEntry.getValue();
-				if (fileWordsTotal.containsKey(filename)) {
-					cnt = fileWordsTotal.get(filename) + cnt;
-				}
-				fileWordsTotal.put(filename, cnt);
-			}
-		}
-		// count appear file for each word
-		Map<String, List<String>> wordsFileList = new HashMap<String, List<String>>();
-		for (Map.Entry<String, Map<String, Integer>> entry : data.entrySet()) {
-			String word = entry.getKey();
-			List<String> fileList = new ArrayList<String>();
-			for (Map.Entry<String, Integer> innerEntry : entry.getValue().entrySet()) {
-				String filename = innerEntry.getKey();
-				fileList.add(filename);
-			}
-			wordsFileList.put(word, fileList);
-		}
-		// result combine
-		for (Map.Entry<String, List<String>> entry : wordsFileList.entrySet()) {
-			String word = entry.getKey();
-			List<String> wordValue = new ArrayList<String>();
-			for (String filename : entry.getValue()) {
-				int termFreq = data.get(word).get(filename);
-				int fileWords = fileWordsTotal.get(filename);
-				String value = "(" + filename + "," + termFreq + "," + fileWords + ")";
-				wordValue.add(value);
-			}
-			collectionMap.put(word, wordValue);
-		}
-		return collectionMap;
 	}
+
 
 	public static void main(String[] args) throws Exception {
 		System.out.println("main args:");
@@ -148,28 +117,28 @@ public class ReverseIndex {
 		Configuration conf = new Configuration();
 		Job job = Job.getInstance(conf, "ReverseIndex");
 		job.setJarByClass(ReverseIndex.class);
+		// set Mapper class, Combiner class , Reducer class
 		job.setMapperClass(TokenizerMapper.class);
-		job.setCombinerClass(IndexReducer.class);
-		job.setReducerClass(IndexReducer.class);
+		job.setCombinerClass(ReverseIndexCombiner.class);
+		job.setReducerClass(ReverseIndexReducer.class);
+		// set output key and value class
 		job.setOutputKeyClass(Text.class);
-		job.setOutputValueClass(IntWritable.class);
+		job.setOutputValueClass(Text.class);
 		for (int i = 0; i < args.length - 1; ++i) {
 			System.out.println("Input file " + i + " : " + args[i]);
 			FileInputFormat.addInputPath(job, new Path(args[i]));
 		}
 		System.out.println("OutputPath : " + args[args.length - 1]);
-		FileOutputFormat.setOutputPath(job, new Path(args[args.length - 1]));
+		Path outputPath = new Path(args[args.length - 1]);
+		FileSystem fileSystem = FileSystem.get(conf);
+		if (fileSystem.exists(outputPath)) {
+			fileSystem.delete(outputPath, true);
+        }
+		FileOutputFormat.setOutputPath(job, outputPath);
 		boolean result = job.waitForCompletion(true);
-		Map<String, List<String>> collectionMap = collect(args[args.length - 1], conf);
-		for (Map.Entry<String, List<String>> entry : collectionMap.entrySet()) {
-			String word = "";
-			int wordCount = entry.getValue().size();
-			for (String s : entry.getValue()) {
-				word += s + ",";
-			}
-			word = word.substring(0, word.length() - 1);
-			System.out.println(entry.getKey() + " -> " + wordCount + " : {" + word + "}");
-		}
+		if (result) {
+            System.out.println("job is finished");
+        }
 		System.exit(result ? 0 : 1);
 	}
 }
